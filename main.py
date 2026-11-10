@@ -11,9 +11,11 @@ SHOPEE_SUB_ID = "18386940600"
 ML_MATT_TOOL = "76918449"
 ML_MATT_WORD = "biancavinte3"
 
-# Canal do Telegram
+# 1. FALLBACK DE CANAIS: Se o 1º não tiver oferta, tenta os seguintes
 CANAIS = [
-    "https://t.me/s/radar_de_promo"
+    "https://t.me/s/radar_de_promo",      # O teu canal principal
+    "https://t.me/s/sddescontos",         # Canal de reserva 1
+    "https://t.me/s/guigatudo"             # Canal de reserva 2
 ]
 
 def expandir_url(url):
@@ -61,11 +63,10 @@ def obter_oferta_telegram():
                 soup = BeautifulSoup(res.text, 'html.parser')
                 mensagens = soup.find_all("div", class_="tgme_widget_message_text")
                 
-                # Procura a oferta mais recente que contenha um link
                 for msg in reversed(mensagens):
                     texto = msg.get_text(separator="\n").strip()
                     if ("http" in texto or "https" in texto) and len(texto) > 10:
-                        print("Oferta capturada com sucesso do teu canal!")
+                        print(f"Oferta capturada com sucesso de: {url}")
                         return texto
             else:
                 print(f"Status HTTP {res.status_code} em {url}")
@@ -73,17 +74,46 @@ def obter_oferta_telegram():
             print(f"Erro ao ler {url}: {e}")
     return None
 
+def gerar_texto_ia(prompt):
+    """2. FALLBACK DA IA: Testa múltiplos modelos sequencialmente"""
+    if not GEMINI_API_KEY:
+        print("Aviso: GEMINI_API_KEY não configurada.")
+        return None
+
+    modelos = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
+    ]
+    
+    for modelo in modelos:
+        url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={GEMINI_API_KEY}"
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        
+        try:
+            resposta = requests.post(url_gemini, json=payload, timeout=15)
+            dados = resposta.json()
+            if resposta.status_code == 200 and 'candidates' in dados and len(dados['candidates']) > 0:
+                print(f"✅ Sucesso gerando resposta com o modelo: {modelo}")
+                return dados['candidates'][0]['content']['parts'][0]['text']
+            else:
+                msg_erro = dados.get('error', {}).get('message', f"HTTP {resposta.status_code}")
+                print(f"⚠️ Modelo {modelo} indisponível: {msg_erro}")
+        except Exception as e:
+            print(f"⚠️ Erro no modelo {modelo}: {e}")
+            
+    return None
+
 def rodar_robo():
     texto_oferta = obter_oferta_telegram()
     if not texto_oferta:
-        print("Nenhuma oferta encontrada no canal.")
+        print("❌ Nenhuma oferta encontrada em nenhum canal.")
         return
 
     texto_com_afiliado = injetar_afiliado(texto_oferta)
 
-    # Modelo Gemini
-    url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
     prompt = f"""Reescreva a oferta abaixo no formato exato de mensagem viral para o WhatsApp, seguindo rigorosamente a estrutura visual descrita:
 
 [FRASE CURTA E PERSUASIVA EM MAIÚSCULAS COMO TÍTULO]
@@ -105,23 +135,26 @@ Regras de formatação:
 Texto original:
 {texto_com_afiliado}"""
 
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    
-    resposta = requests.post(url_gemini, json=payload)
-    dados = resposta.json()
-    
-    try:
-        mensagem_gerada = dados['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        print("Erro ao processar resposta do Gemini:", dados)
-        return
+    mensagem_final = gerar_texto_ia(prompt)
 
-    print("--- Mensagem Formatada ---")
-    print(mensagem_gerada)
+    # 3. FALLBACK DE TEXTO: Se toda a IA falhar, envia o texto original com link de afiliado
+    if not mensagem_final:
+        print("⚠️ IA indisponível no momento. Enviando texto original com link de afiliado.")
+        mensagem_final = f"🔥 NOVO ACHADINHO EM PROMOÇÃO!\n\n{texto_com_afiliado}"
+
+    print("--- Mensagem Final ---")
+    print(mensagem_final)
 
     if WHATSAPP_WEBHOOK_URL:
-        resposta_whatsapp = requests.post(WHATSAPP_WEBHOOK_URL, json={"text": mensagem_gerada, "message": mensagem_gerada})
-        print("Status do Envio WhatsApp:", resposta_whatsapp.status_code)
+        try:
+            resposta_whatsapp = requests.post(
+                WHATSAPP_WEBHOOK_URL, 
+                json={"text": mensagem_final, "message": mensagem_final},
+                timeout=10
+            )
+            print("Status do Envio WhatsApp:", resposta_whatsapp.status_code)
+        except Exception as e:
+            print("Erro no envio para o WhatsApp:", e)
 
 if __name__ == "__main__":
     rodar_robo()
