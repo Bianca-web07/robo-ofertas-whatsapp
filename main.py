@@ -6,155 +6,65 @@ from bs4 import BeautifulSoup
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 WHATSAPP_WEBHOOK_URL = os.environ.get("WHATSAPP_WEBHOOK_URL")
 
-# Identificadores de Afiliado
 SHOPEE_SUB_ID = "18386940600"
 ML_MATT_TOOL = "76918449"
 ML_MATT_WORD = "biancavinte3"
 
-# 1. FALLBACK DE CANAIS: Se o 1º não tiver oferta, tenta os seguintes
 CANAIS = [
-    "https://t.me/s/radar_de_promo",      # O teu canal principal
-    "https://t.me/s/sddescontos",         # Canal de reserva 1
-    "https://t.me/s/guigatudo"             # Canal de reserva 2
+    "https://t.me/s/radar_de_promo",
+    "https://t.me/s/sddescontos"
 ]
 
 def expandir_url(url):
-    """Obtém a URL original do produto caso o link esteja encurtado"""
     try:
         session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         res = session.head(url, allow_redirects=True, timeout=5)
         return res.url
     except Exception:
         return url
 
 def injetar_afiliado(texto):
-    """Anexa as tuas tags de comissão aos links capturados"""
     urls = re.findall(r'https?://[^\s]+', texto)
     texto_convertido = texto
-
     for url in urls:
         url_limpa = url.rstrip('.,);]')
         url_real = expandir_url(url_limpa)
-        
         if "shopee" in url_real.lower():
             divisor = "&" if "?" in url_real else "?"
             novo_link = f"{url_real}{divisor}sub_id={SHOPEE_SUB_ID}"
             texto_convertido = texto_convertido.replace(url_limpa, novo_link)
-            
         elif "mercadolivre" in url_real.lower() or "mercadolibre" in url_real.lower():
             divisor = "&" if "?" in url_real else "?"
             novo_link = f"{url_real}{divisor}matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}"
             texto_convertido = texto_convertido.replace(url_limpa, novo_link)
-            
     return texto_convertido
 
 def obter_oferta_telegram():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     for url in CANAIS:
         try:
-            print(f"Buscando ofertas em: {url}")
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
                 mensagens = soup.find_all("div", class_="tgme_widget_message_text")
-                
                 for msg in reversed(mensagens):
                     texto = msg.get_text(separator="\n").strip()
                     if ("http" in texto or "https" in texto) and len(texto) > 10:
-                        print(f"Oferta capturada com sucesso de: {url}")
                         return texto
-            else:
-                print(f"Status HTTP {res.status_code} em {url}")
-        except Exception as e:
-            print(f"Erro ao ler {url}: {e}")
+        except Exception:
+            pass
     return None
 
 def gerar_texto_ia(prompt):
-    """2. FALLBACK DA IA: Testa múltiplos modelos sequencialmente"""
     if not GEMINI_API_KEY:
-        print("Aviso: GEMINI_API_KEY não configurada.")
         return None
-
-    modelos = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro"
-    ]
-    
+    modelos = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     for modelo in modelos:
         url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={GEMINI_API_KEY}"
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        
         try:
             resposta = requests.post(url_gemini, json=payload, timeout=15)
             dados = resposta.json()
-            if resposta.status_code == 200 and 'candidates' in dados and len(dados['candidates']) > 0:
-                print(f"✅ Sucesso gerando resposta com o modelo: {modelo}")
-                return dados['candidates'][0]['content']['parts'][0]['text']
-            else:
-                msg_erro = dados.get('error', {}).get('message', f"HTTP {resposta.status_code}")
-                print(f"⚠️ Modelo {modelo} indisponível: {msg_erro}")
-        except Exception as e:
-            print(f"⚠️ Erro no modelo {modelo}: {e}")
-            
-    return None
-
-def rodar_robo():
-    texto_oferta = obter_oferta_telegram()
-    if not texto_oferta:
-        print("❌ Nenhuma oferta encontrada em nenhum canal.")
-        return
-
-    texto_com_afiliado = injetar_afiliado(texto_oferta)
-
-    prompt = f"""Reescreva a oferta abaixo no formato exato de mensagem viral para o WhatsApp, seguindo rigorosamente a estrutura visual descrita:
-
-[FRASE CURTA E PERSUASIVA EM MAIÚSCULAS COMO TÍTULO]
-
-[EMOJIS RELACIONADOS] [Nome completo/resumido do produto ou kit]
-
-🔥 DE [Preço De/Antigo, se houver] | POR [Preço Por/Atual]
-🎟️ CUPOM: [Nome do cupom de desconto, caso exista no texto original]
-
-🔗 [Mantenha a URL de compra exatamente como está]
-
-Regras de formatação:
-1. Comece com uma chamada curta, informal e em MAIÚSCULAS (ex: "TU VAI TREINAR TRAJADO", "MENOR PREÇO DO ANO", "PREÇO DE CUSTO").
-2. Use emojis adequados ao tipo de produto (ex: camisetas 👕, calçado 👟, tecnologia 📱).
-3. Na linha do preço, formate no padrão: 🔥 DE X | POR Y (ou apenas 🔥 POR Y se não houver preço antigo).
-4. Se houver cupom no texto original, adicione a linha 🎟️ CUPOM: NOME. Se não houver, omita a linha do cupom.
-5. MANTENHA O LINK DE COMPRA EXATAMENTE COMO ESTÁ NO TEXTO ORIGINAL.
-
-Texto original:
-{texto_com_afiliado}"""
-
-    mensagem_final = gerar_texto_ia(prompt)
-
-    # 3. FALLBACK DE TEXTO: Se toda a IA falhar, envia o texto original com link de afiliado
-    if not mensagem_final:
-        print("⚠️ IA indisponível no momento. Enviando texto original com link de afiliado.")
-        mensagem_final = f"🔥 NOVO ACHADINHO EM PROMOÇÃO!\n\n{texto_com_afiliado}"
-
-    print("--- Mensagem Final ---")
-    print(mensagem_final)
-
-    if WHATSAPP_WEBHOOK_URL:
-        try:
-            resposta_whatsapp = requests.post(
-                WHATSAPP_WEBHOOK_URL, 
-                json={"text": mensagem_final, "message": mensagem_final},
-                timeout=10
-            )
-            print("Status do Envio WhatsApp:", resposta_whatsapp.status_code)
-        except Exception as e:
-            print("Erro no envio para o WhatsApp:", e)
-
-if __name__ == "__main__":
-    rodar_robo()
+            if resposta.status_code == 200 and 'candidates' in dados:
+                
