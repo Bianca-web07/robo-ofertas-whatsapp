@@ -52,12 +52,13 @@ def obter_oferta_telegram():
                     texto = msg.get_text(separator="\n").strip()
                     if ("http" in texto or "https" in texto) and len(texto) > 10:
                         return texto
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Erro ao ler canal {url}: {e}")
     return None
 
 def gerar_texto_ia(prompt):
     if not GEMINI_API_KEY:
+        print("Aviso: GEMINI_API_KEY não configurada.")
         return None
     modelos = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     for modelo in modelos:
@@ -67,4 +68,53 @@ def gerar_texto_ia(prompt):
             resposta = requests.post(url_gemini, json=payload, timeout=15)
             dados = resposta.json()
             if resposta.status_code == 200 and 'candidates' in dados:
-                
+                return dados['candidates'][0]['content']['parts'][0]['text']
+        except Exception as e:
+            print(f"Erro no modelo {modelo}: {e}")
+    return None
+
+def rodar_robo():
+    texto_oferta = obter_oferta_telegram()
+    if not texto_oferta:
+        print("❌ Nenhuma oferta encontrada.")
+        return
+
+    texto_com_afiliado = injetar_afiliado(texto_oferta)
+
+    prompt = f"""Reescreva a oferta abaixo no formato exato de mensagem viral para o WhatsApp:
+
+[FRASE CURTA EM MAIÚSCULAS COMO TÍTULO]
+
+[EMOJIS RELACIONADOS] [Nome do produto]
+
+🔥 DE [Preço Antigo, se houver] | POR [Preço Atual]
+🎟️ CUPOM: [Nome do cupom, se houver]
+
+🔗 [Mantenha a URL original exatamente como está]
+
+Texto original:
+{texto_com_afiliado}"""
+
+    mensagem_final = gerar_texto_ia(prompt)
+    if not mensagem_final:
+        mensagem_final = f"🔥 NOVO ACHADINHO EM PROMOÇÃO!\n\n{texto_com_afiliado}"
+
+    print("--- Mensagem Final ---")
+    print(mensagem_final)
+
+    if WHATSAPP_WEBHOOK_URL:
+        payload_whatsapp = {
+            "text": mensagem_final,
+            "message": mensagem_final,
+            "body": mensagem_final,
+            "caption": mensagem_final
+        }
+        try:
+            res = requests.post(WHATSAPP_WEBHOOK_URL, json=payload_whatsapp, timeout=10)
+            print("Status do Envio WhatsApp:", res.status_code)
+            print("Resposta do Servidor WhatsApp:", res.text)
+        except Exception as e:
+            print("Erro no envio:", e)
+
+if __name__ == "__main__":
+    rodar_robo()
