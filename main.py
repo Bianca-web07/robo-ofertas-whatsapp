@@ -6,22 +6,23 @@ from bs4 import BeautifulSoup
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 WHATSAPP_WEBHOOK_URL = os.environ.get("WHATSAPP_WEBHOOK_URL")
 
-# Identificadores de Afiliado Configurados
+# Identificadores de Afiliado
 SHOPEE_SUB_ID = "18386940600"
 ML_MATT_TOOL = "76918449"
 ML_MATT_WORD = "biancavinte3"
 
+# Canal público do Telegram
 CANAIS = [
-    "https://t.me/s/promoshopeeoficial",
-    "https://t.me/s/ofertasmercadolivre",
-    "https://t.me/s/descontosshopee"
+    "https://t.me/s/radar_de_promo"
 ]
 
 def expandir_url(url):
     """Obtém a URL original do produto caso o link esteja encurtado"""
     try:
         session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0"})
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
         res = session.head(url, allow_redirects=True, timeout=5)
         return res.url
     except Exception:
@@ -50,18 +51,24 @@ def injetar_afiliado(texto):
 
 def obter_oferta_telegram():
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     for url in CANAIS:
         try:
+            print(f"Buscando ofertas em: {url}")
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
                 mensagens = soup.find_all("div", class_="tgme_widget_message_text")
-                if mensagens:
-                    ultima_msg = mensagens[-1].get_text(separator="\n").strip()
-                    if ultima_msg:
-                        return ultima_msg
+                
+                # Procura a oferta mais recente que contenha um link
+                for msg in reversed(mensagens):
+                    texto = msg.get_text(separator="\n").strip()
+                    if ("http" in texto or "https" in texto) and len(texto) > 10:
+                        print("Oferta capturada com sucesso do teu canal!")
+                        return texto
+            else:
+                print(f"Status HTTP {res.status_code} em {url}")
         except Exception as e:
             print(f"Erro ao ler {url}: {e}")
     return None
@@ -69,7 +76,7 @@ def obter_oferta_telegram():
 def rodar_robo():
     texto_oferta = obter_oferta_telegram()
     if not texto_oferta:
-        print("Nenhuma oferta encontrada.")
+        print("Nenhuma oferta encontrada no canal.")
         return
 
     texto_com_afiliado = injetar_afiliado(texto_oferta)
