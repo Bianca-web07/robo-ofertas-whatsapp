@@ -1,51 +1,103 @@
 import os
-import feedparser
+import re
 import requests
+from bs4 import BeautifulSoup
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 WHATSAPP_WEBHOOK_URL = os.environ.get("WHATSAPP_WEBHOOK_URL")
 
-# Feeds RSS alternados (Shopee e Mercado Livre) via RSSHub
-FEEDS = [
-    "https://rsshub.rssforever.com/telegram/channel/promoshopeeoficial",
-    "https://rsshub.app/telegram/channel/descontosshopee",
-    "https://rsshub.rssforever.com/telegram/channel/ofertasmercadolivre",
-    "https://rsshub.app/telegram/channel/promocoesmercadolivre"
+# Identificadores de Afiliado Configurados
+SHOPEE_SUB_ID = "18386940600"
+ML_MATT_TOOL = "76918449"
+ML_MATT_WORD = "biancavinte3"
+
+CANAIS = [
+    "https://t.me/s/promoshopeeoficial",
+    "https://t.me/s/ofertasmercadolivre",
+    "https://t.me/s/descontosshopee"
 ]
 
-def obter_item_recente():
-    for url in FEEDS:
+def expandir_url(url):
+    """Obtém a URL original do produto caso o link esteja encurtado"""
+    try:
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0"})
+        res = session.head(url, allow_redirects=True, timeout=5)
+        return res.url
+    except Exception:
+        return url
+
+def injetar_afiliado(texto):
+    """Anexa as tuas tags de comissão aos links capturados"""
+    urls = re.findall(r'https?://[^\s]+', texto)
+    texto_convertido = texto
+
+    for url in urls:
+        url_limpa = url.rstrip('.,);]')
+        url_real = expandir_url(url_limpa)
+        
+        if "shopee" in url_real.lower():
+            divisor = "&" if "?" in url_real else "?"
+            novo_link = f"{url_real}{divisor}sub_id={SHOPEE_SUB_ID}"
+            texto_convertido = texto_convertido.replace(url_limpa, novo_link)
+            
+        elif "mercadolivre" in url_real.lower() or "mercadolibre" in url_real.lower():
+            divisor = "&" if "?" in url_real else "?"
+            novo_link = f"{url_real}{divisor}matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}"
+            texto_convertido = texto_convertido.replace(url_limpa, novo_link)
+            
+    return texto_convertido
+
+def obter_oferta_telegram():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    for url in CANAIS:
         try:
-            feed = feedparser.parse(url)
-            if feed.entries:
-                print(f"Ofertas encontradas na fonte: {url}")
-                return feed.entries[0]
+            res = requests.get(url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                mensagens = soup.find_all("div", class_="tgme_widget_message_text")
+                if mensagens:
+                    ultima_msg = mensagens[-1].get_text(separator="\n").strip()
+                    if ultima_msg:
+                        return ultima_msg
         except Exception as e:
-            print(f"Erro ao tentar ler {url}: {e}")
+            print(f"Erro ao ler {url}: {e}")
     return None
 
 def rodar_robo():
-    item_recente = obter_item_recente()
-    if not item_recente:
-        print("Nenhuma oferta encontrada em nenhuma das fontes RSS.")
+    texto_oferta = obter_oferta_telegram()
+    if not texto_oferta:
+        print("Nenhuma oferta encontrada.")
         return
 
-    titulo = item_recente.get("title", "")
-    link = item_recente.get("link", "")
-    descricao = item_recente.get("summary", "")
+    texto_com_afiliado = injetar_afiliado(texto_oferta)
 
     url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    prompt = f"""Reescreva a oferta abaixo no formato de mensagem curta e extremamente persuasiva para um canal do WhatsApp (pode ser Shopee ou Mercado Livre). 
-Use emojis atraentes, destaque o desconto e adicione uma chamada para ação clara no final.
+    prompt = f"""Reescreva a oferta abaixo no formato exato de mensagem viral para o WhatsApp, seguindo rigorosamente a estrutura visual descrita:
 
-Título: {titulo}
-Descrição: {descricao}
-Link: {link}"""
+[FRASE CURTA E PERSUASIVA EM MAIÚSCULAS COMO TÍTULO]
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
+[EMOJIS RELACIONADOS] [Nome completo/resumido do produto ou kit]
+
+🔥 DE [Preço De/Antigo, se houver] | POR [Preço Por/Atual]
+🎟️ CUPOM: [Nome do cupom de desconto, caso exista no texto original]
+
+🔗 [Mantenha a URL de compra exatamente como está]
+
+Regras de formatação:
+1. Comece com uma chamada curta, informal e em MAIÚSCULAS (ex: "TU VAI TREINAR TRAJADO", "MENOR PREÇO DO ANO", "PREÇO DE CUSTO").
+2. Use emojis adequados ao tipo de produto (ex: camisetas 👕, calçado 👟, tecnologia 📱).
+3. Na linha do preço, formate no padrão: 🔥 DE X | POR Y (ou apenas 🔥 POR Y se não houver preço antigo).
+4. Se houver cupom no texto original, adicione a linha 🎟️ CUPOM: NOME. Se não houver, omita a linha do cupom.
+5. MANTENHA O LINK DE COMPRA EXATAMENTE COMO ESTÁ NO TEXTO ORIGINAL.
+
+Texto original:
+{texto_com_afiliado}"""
+
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
     resposta = requests.post(url_gemini, json=payload)
     dados = resposta.json()
@@ -56,10 +108,9 @@ Link: {link}"""
         print("Erro ao processar resposta do Gemini:", dados)
         return
 
-    print("--- Mensagem Criada ---")
+    print("--- Mensagem Formatada ---")
     print(mensagem_gerada)
 
-    # Envio para o WhatsApp via Webhook
     if WHATSAPP_WEBHOOK_URL:
         resposta_whatsapp = requests.post(WHATSAPP_WEBHOOK_URL, json={"text": mensagem_gerada, "message": mensagem_gerada})
         print("Status do Envio WhatsApp:", resposta_whatsapp.status_code)
