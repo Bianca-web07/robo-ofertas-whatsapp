@@ -11,7 +11,7 @@ SHOPEE_SUB_ID = "18386940600"
 ML_MATT_TOOL = "76918449"
 ML_MATT_WORD = "biancavinte3"
 
-# Canal público do Telegram
+# Canal do Telegram
 CANAIS = [
     "https://t.me/s/radar_de_promo"
 ]
@@ -81,7 +81,8 @@ def rodar_robo():
 
     texto_com_afiliado = injetar_afiliado(texto_oferta)
 
-    url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # Modelo Gemini
+    url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""Reescreva a oferta abaixo no formato exato de mensagem viral para o WhatsApp, seguindo rigorosamente a estrutura visual descrita:
 
